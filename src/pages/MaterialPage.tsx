@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Atom, Calculator, CheckCircle2, ChevronLeft, Database, Download, Plus, Search, ShieldCheck } from 'lucide-react';
-import { generateReflections, latticeDefaults, validateLattice, type CrystalSystem, type Lattice, type Reflection } from '@/lib/crystallography';
+import { Atom, Calculator, CircleCheck as CheckCircle2, ChevronLeft, Database, Download, Plus, Search, ShieldCheck } from 'lucide-react';
+import { generateReflections, latticeDefaults, updateLatticeValue, validateLattice, type CrystalSystem, type Lattice, type Reflection } from '@/lib/crystallography';
 
 export type MaterialRecord = {
   id: string; name: string; formula: string; phase: string; description: string;
@@ -33,7 +33,7 @@ export default function MaterialPage({ materials, onSave, onOpenAnalysis }: Prop
 
   const errors=useMemo(()=>validateLattice(system,lattice),[system,lattice]);
   const visibleRows=rows.filter(r=>(filter==='all'||(filter==='forbidden'?r.status==='Centering-forbidden':r.status!=='Centering-forbidden')) && r.hkl.toLowerCase().includes(search.toLowerCase()));
-  const update=(key:keyof Lattice,value:string)=>setLattice(p=>({...p,[key]:Number(value)}));
+  const update=(key:keyof Lattice,value:string)=>setLattice(p=>updateLatticeValue(system,p,key,Number(value)));
   function changeSystem(value:CrystalSystem){setSystem(value);setLattice(latticeDefaults(value));setRows([]);}
   function generate(){
     setError('');
@@ -56,7 +56,7 @@ export default function MaterialPage({ materials, onSave, onOpenAnalysis }: Prop
     try { await onSave(record); setCurrent(record); setView('database'); setError(''); } catch(e) { setError(e instanceof Error ? e.message : 'Gagal menyimpan material.'); }
   }
   function exportCsv(){
-    const lines=['h,k,l,HKL,d_Angstrom,d_nm,1_d2,centering_status',...visibleRows.map(r=>[r.h,r.k,r.l,r.hkl,r.dAngstrom.toFixed(6),r.dNm.toFixed(6),r.inverseD2.toFixed(8),r.status].map(v=>`"${String(v).replaceAll('"','""')}"`).join(','))];
+    const lines=['h,k,l,HKL,d_Angstrom,d_nm,1_d2,centering_status',...visibleRows.map(r=>[r.h,r.k,r.l,r.hkl,r.dAngstrom.toFixed(6),r.dNm.toFixed(6),r.inverseD2.toFixed(8),r.status].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(','))];
     const url=URL.createObjectURL(new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8'})); const a=document.createElement('a');a.href=url;a.download=`${(name||'material').replace(/\s+/g,'_')}_HKL.csv`;a.click();URL.revokeObjectURL(url);
   }
   function startNew(){setCurrent(null);setName('');setFormula('');setPhase('');setDescription('');setSource('');setDoi('');setNotes('');setSystem('Cubic');setLattice(latticeDefaults('Cubic'));setSgNumber('225');setSgSymbol('Fm-3m');setRows([]);setError('');setValidationChecks({});setView('calculator');}

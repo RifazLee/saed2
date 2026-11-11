@@ -14,12 +14,49 @@ export type Reflection = {
 };
 
 export function latticeDefaults(system: CrystalSystem): Lattice {
-  const base = { a: 0, b: 0, c: 0, alpha: 0, beta: 0, gamma: 0 };
-  if (system === 'Hexagonal') return { ...base, gamma: 120 };
-  if (system === 'Trigonal / Rhombohedral') return { ...base, alpha: 75, beta: 75, gamma: 75 };
-  if (system === 'Monoclinic') return { ...base, beta: 105 };
-  if (system === 'Triclinic') return { ...base, alpha: 80, beta: 95, gamma: 105 };
-  return base;
+  if (system === 'Hexagonal') return { a: 0, b: 0, c: 0, alpha: 90, beta: 90, gamma: 120 };
+  if (system === 'Trigonal / Rhombohedral') return { a: 0, b: 0, c: 0, alpha: 75, beta: 75, gamma: 75 };
+  if (system === 'Monoclinic') return { a: 0, b: 0, c: 0, alpha: 90, beta: 105, gamma: 90 };
+  if (system === 'Triclinic') return { a: 0, b: 0, c: 0, alpha: 80, beta: 95, gamma: 105 };
+  return { a: 0, b: 0, c: 0, alpha: 90, beta: 90, gamma: 90 };
+}
+
+/**
+ * Apply an edit to one lattice field while keeping the crystal-system constraints
+ * satisfied: derived (locked) fields get the correct value automatically, so the
+ * operator only enters the independent parameters.
+ */
+export function updateLatticeValue(system: CrystalSystem, lattice: Lattice, key: keyof Lattice, value: number): Lattice {
+  const next: Lattice = { ...lattice, [key]: value };
+  switch (system) {
+    case 'Cubic':
+      if (key === 'a') { next.b = value; next.c = value; }
+      next.alpha = 90; next.beta = 90; next.gamma = 90;
+      break;
+    case 'Tetragonal':
+      if (key === 'a') next.b = value;
+      next.alpha = 90; next.beta = 90; next.gamma = 90;
+      break;
+    case 'Orthorhombic':
+      next.alpha = 90; next.beta = 90; next.gamma = 90;
+      break;
+    case 'Hexagonal':
+      if (key === 'a') next.b = value;
+      next.alpha = 90; next.beta = 90; next.gamma = 120;
+      break;
+    case 'Trigonal / Rhombohedral':
+      if (key === 'a') { next.b = value; next.c = value; }
+      if (key === 'alpha' || key === 'beta' || key === 'gamma') {
+        next.alpha = value; next.beta = value; next.gamma = value;
+      }
+      break;
+    case 'Monoclinic':
+      next.alpha = 90; next.gamma = 90;
+      break;
+    default:
+      break;
+  }
+  return next;
 }
 
 function determinant(m: number[][]): number {
