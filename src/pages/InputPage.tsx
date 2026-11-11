@@ -1,7 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
-import { Upload, Settings2, ChevronRight, X, Atom, FileImage, Sliders } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { Upload, Settings2, ChevronRight, X, Atom, FileImage, Sliders, RefreshCw } from 'lucide-react';
 import type { AnalysisParams, BeamStopArm, MaterialId } from '@/lib/diffraction/types';
-import { DEFAULT_HKL } from '@/lib/diffraction/types';
 import { api, type ApiMaterial } from '@/lib/api';
 
 export type InputEntry = { id: string; file: File; kv: number; cameraLengthM: number };
@@ -29,7 +28,6 @@ export default function InputPage({ onStart, onBackToMaterials }: Props) {
   const [materialsLoading, setMaterialsLoading] = useState(true);
   const [materialsError, setMaterialsError] = useState('');
   const [customA, setCustomA] = useState<string>('0.404');
-  const [hkl, setHkl] = useState<string>(DEFAULT_HKL.join(' '));
   const [kv, setKv] = useState<string>('100');
   const [cameraLength, setCameraLength] = useState<string>('0.3');
   const [kSigma, setKSigma] = useState<string>('15');
@@ -60,36 +58,39 @@ export default function InputPage({ onStart, onBackToMaterials }: Props) {
     setEntries(prev => prev.map(e => (e.id === id ? { ...e, ...patch } : e)));
   }
 
-  useEffect(() => {
+  const loadMaterials = useCallback(() => {
+    setMaterialsLoading(true); setMaterialsError('');
     api<{success:boolean;data:ApiMaterial[]}>('/materials/validated')
       .then(result => {
         setValidatedMaterials(result.data);
-        if (result.data.length) {
-          setSelectedDbMaterial(result.data[0]);
-          const keys = result.data[0].reflections?.map(r => `${r.h},${r.k},${r.l}`) || [];
-          setHkl(keys.join(' '));
-        }
+        setSelectedDbMaterial(prev => result.data.find(m => m.id === prev?.id) || result.data[0] || null);
       })
       .catch(err => setMaterialsError(err instanceof Error ? err.message : 'Gagal memuat material tervalidasi'))
       .finally(() => setMaterialsLoading(false));
   }, []);
 
+  useEffect(() => {
+    loadMaterials();
+  }, [loadMaterials]);
+
   function handleMaterialChange(id: string) {
     const selected = validatedMaterials.find(m => m.id === id) || null;
     setSelectedDbMaterial(selected);
     setMaterial('custom');
-    if (selected) setHkl((selected.reflections || []).map(r => `${r.h},${r.k},${r.l}`).join(' '));
   }
 
   function handleStart() {
     if (entries.length === 0) return;
+    const hklList = (selectedDbMaterial?.reflections || [])
+      .filter(r => !r.reflection_status || r.reflection_status === 'Allowed')
+      .map(r => `${r.h},${r.k},${r.l}`);
     const params: AnalysisParams = {
       kv: parseFloat(kv) || 100,
       cameraLengthM: parseFloat(cameraLength) || 0.3,
       material,
       referenceDnm: selectedDbMaterial ? Object.fromEntries((selectedDbMaterial.reflections || []).map(r => [`${r.h},${r.k},${r.l}`, Number(r.d_nanometer)])) : undefined,
       customA_nm: material === 'custom' ? parseFloat(customA) || null : null,
-      hklList: hkl.trim().split(/\s+/).filter(Boolean),
+      hklList,
       cropBottom: cropBottom.trim() ? parseInt(cropBottom) : null,
       arm,
       kSigma: parseFloat(kSigma) || 15,
@@ -205,13 +206,15 @@ export default function InputPage({ onStart, onBackToMaterials }: Props) {
               {!materialsLoading && validatedMaterials.length === 0 && <option value="">Belum ada material tervalidasi</option>}
               {validatedMaterials.map(m => <option key={m.id} value={m.id}>{m.material_name} · {m.chemical_formula} · {m.phase} · {m.crystal_system} · {m.space_group_symbol}</option>)}
             </select>
-            {materialsError && <span className="mt-1 block text-xs text-red-600">{materialsError}</span>}
+            {materialsError && (
+              <span className="mt-1 flex items-center gap-2 text-xs text-red-600">
+                {materialsError}
+                <button type="button" onClick={loadMaterials} className="flex items-center gap-1 rounded border border-red-200 px-2 py-0.5 text-red-700 hover:bg-red-50">
+                  <RefreshCw size={11}/> Coba lagi
+                </button>
+              </span>
+            )}
             {!materialsError && !materialsLoading && validatedMaterials.length === 0 && <span className="mt-1 block text-xs text-amber-700">Validasi material pada Material Reference Database terlebih dahulu.</span>}
-          </Field>
-
-          <Field label="Daftar hkl">
-            <input type="text" value={hkl} onChange={(e) => setHkl(e.target.value)}
-              className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded font-mono" />
           </Field>
 
           <div className="grid grid-cols-2 gap-3">
