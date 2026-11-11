@@ -23,8 +23,8 @@ async function getMaterial(conn,id,lock=false){
 router.get('/',optionalAuth,async(req,res,next)=>{
  try{
   const status=req.query.status;
-  const where=status? 'WHERE status=?':'';
-  const [rows]=await pool.execute(`SELECT id,material_name,chemical_formula,phase,description,source,doi,notes,crystal_system,space_group_number,space_group_symbol,setting,lattice_json,status,created_at,validated_at FROM materials ${where} ORDER BY created_at DESC`,status?[status]:[]);
+  const where=status? 'WHERE m.status=?':'';
+  const [rows]=await pool.execute(`SELECT m.id,m.material_name,m.chemical_formula,m.phase,m.description,m.source,m.doi,m.notes,m.crystal_system,m.space_group_number,m.space_group_symbol,m.setting,m.lattice_json,m.status,m.current_version_id,m.validated_version_id,m.created_at,m.validated_at,(SELECT COUNT(*) FROM hkl_reflections r WHERE r.material_version_id=m.current_version_id AND r.reflection_status='Allowed') AS allowed_count FROM materials m ${where} ORDER BY m.created_at DESC`,status?[status]:[]);
   res.json({success:true,data:rows});
  }catch(e){next(e);}
 });
@@ -33,7 +33,7 @@ router.get('/validated',async(_req,res,next)=>{
   const [rows]=await pool.execute(`SELECT m.id,m.material_name,m.chemical_formula,m.phase,m.crystal_system,m.space_group_number,m.space_group_symbol,m.setting,mv.version_number,mv.lattice_a,mv.lattice_b,mv.lattice_c,mv.alpha,mv.beta,mv.gamma FROM materials m JOIN material_versions mv ON mv.id=m.validated_version_id WHERE m.validated_version_id IS NOT NULL AND mv.validation_status='Validated' ORDER BY m.material_name`);
   const data=[];
   for(const m of rows){
-   const [refs]=await pool.execute(`SELECT h,k,l,d_angstrom,d_nanometer FROM hkl_reflections WHERE material_version_id=? AND reflection_status='Allowed' ORDER BY d_angstrom DESC`,[m.current_version_id]);
+   const [refs]=await pool.execute(`SELECT h,k,l,d_angstrom,d_nanometer FROM hkl_reflections WHERE material_version_id=? AND reflection_status='Allowed' ORDER BY d_angstrom DESC`,[m.validated_version_id]);
    data.push({...m,reflections:refs});
   }
   res.json({success:true,data});
@@ -128,8 +128,12 @@ router.get('/:id',async(req,res,next)=>{
  try{
   const id=idParam(req);const [rows]=await pool.execute('SELECT * FROM materials WHERE id=?',[id]);if(!rows.length)throw httpError('Material not found',404);
   const m=rows[0];let version=null,reflections=[];
-  if(m.current_version_id){const [v]=await pool.execute('SELECT * FROM material_versions WHERE id=?',[m.current_version_id]);version=v[0]||null;[reflections]=await pool.execute('SELECT * FROM hkl_reflections WHERE material_version_id=? ORDER BY d_angstrom DESC',[m.current_version_id]);}
-  res.json({success:true,data:{...m,version,reflections}});
+  if(m.current_version_id){
+   const [v]=await pool.execute('SELECT * FROM material_versions WHERE id=? AND material_id=?',[m.current_version_id,id]);
+   if(v.length){version=v[0];[reflections]=await pool.execute('SELECT h,k,l,d_angstrom,d_nanometer,inverse_d2,reflection_status,calculation_method FROM hkl_reflections WHERE material_version_id=? ORDER BY d_angstrom DESC',[m.current_version_id]);}
+  }
+  const summary={total:reflections.length,allowed:reflections.filter(r=>r.reflection_status==='Allowed').length,forbidden:reflections.filter(r=>r.reflection_status==='Forbidden').length,requiresVerification:reflections.filter(r=>r.reflection_status==='Requires SG verification').length};
+  res.json({success:true,data:{...m,version,reflections,summary}});
  }catch(e){next(e);}
 });
 router.get('/:id/versions',requireAuth,async(req,res,next)=>{

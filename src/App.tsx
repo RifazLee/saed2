@@ -4,16 +4,17 @@ import ProcessingPage from '@/pages/ProcessingPage';
 import RingSelectPage from '@/pages/RingSelectPage';
 import ResultsPage from '@/pages/ResultsPage';
 import MaterialPage, { type MaterialRecord } from '@/pages/MaterialPage';
+import MaterialDetailPage from '@/pages/MaterialDetailPage';
 import LoginPage from '@/pages/LoginPage';
 import type { AnalysisParams, AnalysisResult, DetectionResult } from '@/lib/diffraction/types';
 import { api, apiMaterialToRecord, type ApiMaterial } from '@/lib/api';
 
-type Stage = 'materials' | 'input' | 'processing' | 'ringselect' | 'results';
+type Stage = 'materials' | 'material-detail' | 'input' | 'processing' | 'ringselect' | 'results';
 type ApiEnvelope<T> = {success:boolean;data:T};
 type LoginResponse = {success:boolean;token:string;user:{id:string;email:string;role:string}};
-
 export default function App() {
   const [stage, setStage] = useState<Stage>('materials');
+  const [detailMaterialId, setDetailMaterialId] = useState<string|null>(null);
   const [token,setToken]=useState<string|null>(()=>sessionStorage.getItem('saed_token'));
   const [materials, setMaterials] = useState<MaterialRecord[]>([]);
   const [entries, setEntries] = useState<InputEntry[]>([]);
@@ -83,7 +84,8 @@ export default function App() {
   }, []);
 
   if(!token)return <LoginPage onLogin={login}/>;
-  if(stage==='materials')return <div><div className="absolute right-6 top-6 z-10 flex items-center gap-3"><button onClick={logout} className="rounded-lg border border-slate-600 px-3 py-2 text-xs text-white">Sign out</button></div>{apiError&&<div className="bg-red-50 px-6 py-2 text-center text-xs text-red-700">{apiError}</div>}{loadingMaterials&&<div className="bg-slate-100 px-6 py-2 text-center text-xs text-slate-500">Loading materials...</div>}<MaterialPage materials={materials} onSave={saveMaterial} onOpenAnalysis={()=>setStage('input')}/></div>;
+  if(stage==='material-detail'&&detailMaterialId)return <MaterialDetailPage materialId={detailMaterialId} token={token} onBack={()=>{setDetailMaterialId(null);setStage('materials');void refreshMaterials();}}/>;
+  if(stage==='materials')return <div><div className="absolute right-6 top-6 z-10 flex items-center gap-3"><button onClick={logout} className="rounded-lg border border-slate-600 px-3 py-2 text-xs text-white">Sign out</button></div>{apiError&&<div className="bg-red-50 px-6 py-2 text-center text-xs text-red-700">{apiError}</div>}{loadingMaterials&&<div className="bg-slate-100 px-6 py-2 text-center text-xs text-slate-500">Loading materials...</div>}<MaterialPage materials={materials} onSave={saveMaterial} onOpenAnalysis={()=>setStage('input')} onViewDetail={(id)=>{setDetailMaterialId(id);setStage('material-detail');}}/></div>;
   if (stage === 'input') return <InputPage onStart={handleStart} onBackToMaterials={() => setStage('materials')} />;
   if (stage === 'processing' && params) return <ProcessingPage entries={entries} params={params} onDone={handleDetected} />;
   if (stage === 'ringselect' && params) return <RingSelectPage detections={detections} params={params} errors={errors} onConfirm={handleRingSelected} onRestart={handleRestart} />;
