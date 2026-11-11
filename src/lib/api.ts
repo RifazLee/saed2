@@ -17,6 +17,16 @@ export type ApiMaterialVersion = {
 
 export type ApiReflectionSummary = { total:number; allowed:number; forbidden:number; requiresVerification:number };
 
+export type ApiValidatedMaterial = {
+ id:string; material_name:string; chemical_formula:string; phase:string; crystal_system:string;
+ space_group_number:number; space_group_symbol:string; setting:string;
+ validatedVersionId:string; versionNumber:number;
+ lattice:{a:number;b:number;c:number;alpha:number;beta:number;gamma:number};
+ lattice_a?:number; lattice_b?:number; lattice_c?:number; alpha?:number; beta?:number; gamma?:number;
+ allowedReflectionCount:number;
+ reflections:ApiReflection[];
+};
+
 export type ApiMaterial = {
  id:string; material_name:string; chemical_formula:string; phase:string; crystal_system:string;
  space_group_number:number; space_group_symbol:string; setting:string;

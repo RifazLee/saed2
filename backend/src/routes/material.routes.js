@@ -30,11 +30,19 @@ router.get('/',optionalAuth,async(req,res,next)=>{
 });
 router.get('/validated',async(_req,res,next)=>{
  try{
-  const [rows]=await pool.execute(`SELECT m.id,m.material_name,m.chemical_formula,m.phase,m.crystal_system,m.space_group_number,m.space_group_symbol,m.setting,mv.version_number,mv.lattice_a,mv.lattice_b,mv.lattice_c,mv.alpha,mv.beta,mv.gamma FROM materials m JOIN material_versions mv ON mv.id=m.validated_version_id WHERE m.validated_version_id IS NOT NULL AND mv.validation_status='Validated' ORDER BY m.material_name`);
+  const [rows]=await pool.execute(`SELECT m.id,m.material_name,m.chemical_formula,m.phase,m.crystal_system,m.space_group_number,m.space_group_symbol,m.setting,m.validated_version_id,mv.version_number,mv.lattice_a,mv.lattice_b,mv.lattice_c,mv.alpha,mv.beta,mv.gamma FROM materials m JOIN material_versions mv ON mv.id=m.validated_version_id WHERE m.validated_version_id IS NOT NULL AND m.status='Validated' AND mv.validation_status='Validated' ORDER BY m.material_name`);
   const data=[];
   for(const m of rows){
-   const [refs]=await pool.execute(`SELECT h,k,l,d_angstrom,d_nanometer FROM hkl_reflections WHERE material_version_id=? AND reflection_status='Allowed' ORDER BY d_angstrom DESC`,[m.validated_version_id]);
-   data.push({...m,reflections:refs});
+   const [refs]=await pool.execute(`SELECT h,k,l,d_angstrom,d_nanometer,inverse_d2,reflection_status FROM hkl_reflections WHERE material_version_id=? AND reflection_status='Allowed' ORDER BY d_angstrom DESC`,[m.validated_version_id]);
+   data.push({
+    id:m.id,material_name:m.material_name,chemical_formula:m.chemical_formula,phase:m.phase,
+    crystal_system:m.crystal_system,space_group_number:m.space_group_number,space_group_symbol:m.space_group_symbol,setting:m.setting,
+    validatedVersionId:m.validated_version_id,versionNumber:m.version_number,
+    lattice:{a:m.lattice_a,b:m.lattice_b,c:m.lattice_c,alpha:m.alpha,beta:m.beta,gamma:m.gamma},
+    lattice_a:m.lattice_a,lattice_b:m.lattice_b,lattice_c:m.lattice_c,alpha:m.alpha,beta:m.beta,gamma:m.gamma,
+    allowedReflectionCount:refs.length,
+    reflections:refs
+   });
   }
   res.json({success:true,data});
  }catch(e){next(e);}

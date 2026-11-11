@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Upload, Settings2, ChevronRight, X, Atom, FileImage, Sliders, RefreshCw } from 'lucide-react';
 import type { AnalysisParams, BeamStopArm, MaterialId } from '@/lib/diffraction/types';
-import { api, type ApiMaterial } from '@/lib/api';
+import { api, type ApiValidatedMaterial } from '@/lib/api';
 
 export type InputEntry = { id: string; file: File; kv: number; cameraLengthM: number };
 
@@ -23,8 +23,8 @@ export default function InputPage({ onStart, onBackToMaterials }: Props) {
   const [entries, setEntries] = useState<InputEntry[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [material, setMaterial] = useState<MaterialId>('custom');
-  const [validatedMaterials, setValidatedMaterials] = useState<ApiMaterial[]>([]);
-  const [selectedDbMaterial, setSelectedDbMaterial] = useState<ApiMaterial | null>(null);
+  const [validatedMaterials, setValidatedMaterials] = useState<ApiValidatedMaterial[]>([]);
+  const [selectedDbMaterial, setSelectedDbMaterial] = useState<ApiValidatedMaterial | null>(null);
   const [materialsLoading, setMaterialsLoading] = useState(true);
   const [materialsError, setMaterialsError] = useState('');
   const [customA, setCustomA] = useState<string>('0.404');
@@ -60,12 +60,15 @@ export default function InputPage({ onStart, onBackToMaterials }: Props) {
 
   const loadMaterials = useCallback(() => {
     setMaterialsLoading(true); setMaterialsError('');
-    api<{success:boolean;data:ApiMaterial[]}>('/materials/validated')
+    api<{success:boolean;data:ApiValidatedMaterial[]}>('/materials/validated')
       .then(result => {
         setValidatedMaterials(result.data);
         setSelectedDbMaterial(prev => result.data.find(m => m.id === prev?.id) || result.data[0] || null);
       })
-      .catch(err => setMaterialsError(err instanceof Error ? err.message : 'Gagal memuat material tervalidasi'))
+      .catch(err => {
+        console.error('[SAED] Gagal memuat material tervalidasi:', err);
+        setMaterialsError(err instanceof Error && err.message ? `${err.message}` : 'Gagal memuat material tervalidasi.');
+      })
       .finally(() => setMaterialsLoading(false));
   }, []);
 
@@ -79,17 +82,37 @@ export default function InputPage({ onStart, onBackToMaterials }: Props) {
     setMaterial('custom');
   }
 
+  const hasValidLattice = Boolean(
+    selectedDbMaterial?.lattice &&
+    [selectedDbMaterial.lattice.a, selectedDbMaterial.lattice.b, selectedDbMaterial.lattice.c]
+      .every(v => Number.isFinite(v) && v > 0)
+  );
+  const allowedReflections = (selectedDbMaterial?.reflections || []).filter(
+    r => !r.reflection_status || r.reflection_status === 'Allowed'
+  );
+  const kvValue = parseFloat(kv);
+  const cameraValue = parseFloat(cameraLength);
+  const canStart = Boolean(
+    selectedDbMaterial &&
+    selectedDbMaterial.validatedVersionId &&
+    hasValidLattice &&
+    allowedReflections.length > 0 &&
+    Number.isFinite(kvValue) && kvValue > 0 &&
+    Number.isFinite(cameraValue) && cameraValue > 0 &&
+    entries.length > 0 &&
+    !materialsLoading
+  );
+
   function handleStart() {
-    if (entries.length === 0) return;
-    const hklList = (selectedDbMaterial?.reflections || [])
-      .filter(r => !r.reflection_status || r.reflection_status === 'Allowed')
-      .map(r => `${r.h},${r.k},${r.l}`);
+    if (!canStart || !selectedDbMaterial) return;
+    const hklList = allowedReflections.map(r => `${r.h},${r.k},${r.l}`);
+    const lat = selectedDbMaterial.lattice;
     const params: AnalysisParams = {
-      kv: parseFloat(kv) || 100,
-      cameraLengthM: parseFloat(cameraLength) || 0.3,
+      kv: kvValue,
+      cameraLengthM: cameraValue,
       material,
-      referenceDnm: selectedDbMaterial ? Object.fromEntries((selectedDbMaterial.reflections || []).map(r => [`${r.h},${r.k},${r.l}`, Number(r.d_nanometer)])) : undefined,
-      customA_nm: material === 'custom' ? parseFloat(customA) || null : null,
+      referenceDnm: Object.fromEntries(allowedReflections.map(r => [`${r.h},${r.k},${r.l}`, Number(r.d_nanometer)])),
+      customA_nm: material === 'custom' ? parseFloat(customA) || null : lat ? lat.a / 10 : null,
       hklList,
       cropBottom: cropBottom.trim() ? parseInt(cropBottom) : null,
       arm,
@@ -202,19 +225,25 @@ export default function InputPage({ onStart, onBackToMaterials }: Props) {
               disabled={materialsLoading || validatedMaterials.length === 0}
               className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white disabled:bg-slate-100"
             >
-              {materialsLoading && <option value="">Memuat material...</option>}
-              {!materialsLoading && validatedMaterials.length === 0 && <option value="">Belum ada material tervalidasi</option>}
+              {materialsLoading && <option value="">Memuat material tervalidasi...</option>}
+              {!materialsLoading && validatedMaterials.length === 0 && <option value="">Belum ada material tervalidasi.</option>}
               {validatedMaterials.map(m => <option key={m.id} value={m.id}>{m.material_name} · {m.chemical_formula} · {m.phase} · {m.crystal_system} · {m.space_group_symbol}</option>)}
             </select>
+            {materialsLoading && <span className="mt-1 block text-xs text-slate-500">Memuat material tervalidasi...</span>}
             {materialsError && (
               <span className="mt-1 flex items-center gap-2 text-xs text-red-600">
-                {materialsError}
+                Gagal memuat material tervalidasi.
                 <button type="button" onClick={loadMaterials} className="flex items-center gap-1 rounded border border-red-200 px-2 py-0.5 text-red-700 hover:bg-red-50">
                   <RefreshCw size={11}/> Coba lagi
                 </button>
               </span>
             )}
-            {!materialsError && !materialsLoading && validatedMaterials.length === 0 && <span className="mt-1 block text-xs text-amber-700">Validasi material pada Material Reference Database terlebih dahulu.</span>}
+            {!materialsError && !materialsLoading && validatedMaterials.length === 0 && <span className="mt-1 block text-xs text-amber-700">Belum ada material tervalidasi. Validasi material pada Material Reference Database terlebih dahulu.</span>}
+            {selectedDbMaterial && !materialsError && (
+              <span className="mt-1 block text-xs text-slate-500">
+                Versi tervalidasi v{selectedDbMaterial.versionNumber} · {selectedDbMaterial.allowedReflectionCount} refleksi Allowed.
+              </span>
+            )}
           </Field>
 
           <div className="grid grid-cols-2 gap-3">
@@ -265,7 +294,7 @@ export default function InputPage({ onStart, onBackToMaterials }: Props) {
 
           <button
             onClick={handleStart}
-            disabled={entries.length === 0 || !selectedDbMaterial || materialsLoading}
+            disabled={!canStart}
             className="w-full mt-2 px-4 py-2.5 rounded-lg bg-slate-900 text-white font-medium flex items-center justify-center gap-2 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition"
           >
             Mulai Analisis <ChevronRight size={18} />
