@@ -3,7 +3,7 @@ const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/,'');
 export type ApiReflection = {
  id?:string; h:number; k:number; l:number;
  d_angstrom:number; d_nanometer:number; inverse_d2:number;
- reflection_status:'Allowed'|'Forbidden'|'Requires SG verification';
+ reflection_status:'Allowed'|'Forbidden'|'Centering-compatible'|'Requires SG verification';
  calculation_method?:string;
 };
 
@@ -15,7 +15,15 @@ export type ApiMaterialVersion = {
  validation_notes?:string|null; created_at:string; validated_at?:string|null;
 };
 
-export type ApiReflectionSummary = { total:number; allowed:number; forbidden:number; requiresVerification:number };
+export type ApiReflectionSummary = { total:number; allowed:number; forbidden:number; centeringCompatible?:number; requiresVerification:number };
+
+export type ApiCalculationResponse = {
+ spglibAvailable:boolean; spglibReason:string|null;
+ counts:{total:number;allowed:number;forbidden:number;centeringCompatible:number;requiresVerification:number};
+ reflections:Array<{h:number;k:number;l:number;dAngstrom:number;dNanometer:number;inverseD2:number;status:'Allowed'|'Forbidden'|'Centering-compatible'|'Requires SG verification'}>;
+};
+
+export type ApiSaveReflectionsResponse = { versionId:string; version:number; savedCount:number };
 
 export type ApiValidatedMaterial = {
  id:string; material_name:string; chemical_formula:string; phase:string; crystal_system:string;
@@ -61,5 +69,5 @@ export function parseLatticeJson(m:ApiMaterial):{a:number;b:number;c:number;alph
 
 export function apiMaterialToRecord(m:ApiMaterial){
  const lattice=parseLatticeJson(m);
- return {id:m.id,name:m.material_name,formula:m.chemical_formula,phase:m.phase,description:m.description||'',source:m.source||'',doi:m.doi||'',notes:m.notes||'',system:m.crystal_system,lattice,sgNumber:m.space_group_number,sgSymbol:m.space_group_symbol,setting:m.setting||'Standard',allowedCount:Number(m.allowed_count??0),reflections:(m.reflections||[]).map(r=>({h:r.h,k:r.k,l:r.l,hkl:`(${r.h} ${r.k} ${r.l})`,dAngstrom:Number(r.d_angstrom),dNm:Number(r.d_nanometer),inverseD2:1/(Number(r.d_angstrom)**2),status:r.reflection_status==='Forbidden'?'Centering-forbidden':'Centering-compatible; SG check required'})),status:m.status,createdAt:m.created_at,validatedAt:m.validated_at||undefined};
+ return {id:m.id,name:m.material_name,formula:m.chemical_formula,phase:m.phase,description:m.description||'',source:m.source||'',doi:m.doi||'',notes:m.notes||'',system:m.crystal_system,lattice,sgNumber:m.space_group_number,sgSymbol:m.space_group_symbol,setting:m.setting||'Standard',allowedCount:Number(m.allowed_count??0),reflections:(m.reflections||[]).map(r=>({h:r.h,k:r.k,l:r.l,hkl:`(${r.h} ${r.k} ${r.l})`,dAngstrom:Number(r.d_angstrom),dNm:Number(r.d_nanometer),inverseD2:1/(Number(r.d_angstrom)**2),status:r.reflection_status})),status:m.status,createdAt:m.created_at,validatedAt:m.validated_at||undefined};
 }

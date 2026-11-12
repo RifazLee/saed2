@@ -93,25 +93,47 @@ router.post('/:id/calculate',requireAuth,async(req,res,next)=>{
   const id=idParam(req);const limits=z.object({maxH:z.number().int().min(0).max(30),maxK:z.number().int().min(0).max(30),maxL:z.number().int().min(0).max(30),minD:z.number().positive(),maxD:z.number().positive().optional()}).parse(req.body);
   await conn.beginTransaction();const m=await getMaterial(conn,id,true);
   if(m.status==='Validated')throw httpError('Validated material cannot be recalculated in place. Create a new revision.');
+  const cell=typeof m.lattice_json==='string'?JSON.parse(m.lattice_json):m.lattice_json;
+  const candidates=generateCandidates({...cell,spaceGroupSymbol:m.space_group_symbol},limits);
+  if(candidates.length>50000)throw httpError('Generated reflection count exceeds 50,000. Reduce HKL limits or narrow the d-spacing range.',413);
+  const sg=await validateSpaceGroup({spaceGroupNumber:m.space_group_number,spaceGroupSymbol:m.space_group_symbol,setting:m.setting,reflections:candidates});
+  const byKey=new Map((sg.reflections||[]).map(r=>[`${r.h},${r.k},${r.l}`,r]));
+  const reflections=candidates.map(r=>{
+   const verdict=byKey.get(`${r.h},${r.k},${r.l}`);
+   let status;
+   if(!sg.available){status=r.centeringCompatible?'Centering-compatible':'Forbidden';}
+   else{status=verdict?.allowed?'Allowed':'Forbidden';}
+   return {h:r.h,k:r.k,l:r.l,dAngstrom:r.dAngstrom,dNanometer:r.dNanometer,inverseD2:r.inverseD2,status};
+  });
+  await conn.commit();
+  const counts={total:reflections.length,allowed:reflections.filter(r=>r.status==='Allowed').length,forbidden:reflections.filter(r=>r.status==='Forbidden').length,centeringCompatible:reflections.filter(r=>r.status==='Centering-compatible').length,requiresVerification:0};
+  res.json({success:true,data:{spglibAvailable:sg.available,spglibReason:sg.reason||null,counts,reflections}});
+ }catch(e){await conn.rollback();next(e);}finally{conn.release();}
+});
+const reflectionSchema=z.object({
+ h:z.number().int().min(0),k:z.number().int().min(0),l:z.number().int().min(0),
+ dAngstrom:z.number().positive().finite(),dNanometer:z.number().positive().finite(),inverseD2:z.number().positive().finite(),
+ status:z.enum(['Allowed','Forbidden','Centering-compatible','Requires SG verification'])
+}).refine(r=>!(r.h===0&&r.k===0&&r.l===0),{message:'(000) is not a valid reflection'});
+router.post('/:id/save-reflections',requireAuth,async(req,res,next)=>{
+ const conn=await pool.getConnection();
+ try{
+  const id=idParam(req);const input=z.object({maxH:z.number().int().min(0).max(30),maxK:z.number().int().min(0).max(30),maxL:z.number().int().min(0).max(30),minD:z.number().positive(),maxD:z.number().positive().optional(),reflections:z.array(reflectionSchema).min(1).max(50000)}).parse(req.body);
+  await conn.beginTransaction();const m=await getMaterial(conn,id,true);
+  if(m.status==='Validated')throw httpError('Validated material is immutable; create a new revision to save new reflections.',409);
   const [vrows]=await conn.execute('SELECT COALESCE(MAX(version_number),0)+1 AS next FROM material_versions WHERE material_id=?',[id]);
   const version=vrows[0].next;
   const cell=typeof m.lattice_json==='string'?JSON.parse(m.lattice_json):m.lattice_json;
-  const candidates=generateCandidates(cell,limits);
-  if(candidates.length>50000)throw httpError('Generated reflection count exceeds 50,000. Reduce HKL limits or narrow the d-spacing range.',413);
-  const sg=await validateSpaceGroup({spaceGroupNumber:m.space_group_number,spaceGroupSymbol:m.space_group_symbol,setting:m.setting,reflections:candidates});
   const versionId=randomUUID();
   await conn.execute(`INSERT INTO material_versions(id,material_id,version_number,lattice_a,lattice_b,lattice_c,alpha,beta,gamma,calculation_method,validation_status,calculation_parameters_json,created_by) VALUES(?,?,?,?,?,?,?,?,?,'metric-tensor+spglib','Pending Validation',?,?)`,
-   [versionId,id,version,cell.a,cell.b,cell.c,cell.alpha,cell.beta,cell.gamma,JSON.stringify({...limits,spglibAvailable:sg.available}),req.user.sub]);
-  const byKey=new Map((sg.reflections||[]).map(r=>[`${r.h},${r.k},${r.l}`,r]));
-  for(const r of candidates){
-   const verdict=byKey.get(`${r.h},${r.k},${r.l}`);
-   const status=!sg.available?'Requires SG verification':verdict?.allowed?'Allowed':'Forbidden';
-   await conn.execute(`INSERT INTO hkl_reflections(id,material_version_id,h,k,l,d_angstrom,d_nanometer,inverse_d2,reflection_status,calculation_method) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-    [randomUUID(),versionId,r.h,r.k,r.l,r.dAngstrom,r.dNanometer,r.inverseD2,status,sg.available?'spglib':'metric-only']);
+   [versionId,id,version,cell.a,cell.b,cell.c,cell.alpha,cell.beta,cell.gamma,JSON.stringify({maxH:input.maxH,maxK:input.maxK,maxL:input.maxL,minD:input.minD,...(input.maxD!=null?{maxD:input.maxD}:{})}),req.user.sub]);
+  for(const r of input.reflections){
+   await conn.execute(`INSERT INTO hkl_reflections(id,material_version_id,h,k,l,d_angstrom,d_nanometer,inverse_d2,reflection_status,calculation_method) VALUES(?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE d_angstrom=VALUES(d_angstrom),d_nanometer=VALUES(d_nanometer),inverse_d2=VALUES(inverse_d2),reflection_status=VALUES(reflection_status),calculation_method=VALUES(calculation_method)`,
+    [randomUUID(),versionId,r.h,r.k,r.l,r.dAngstrom,r.dNanometer,r.inverseD2,r.status,'metric-tensor+spglib']);
   }
   await conn.execute(`UPDATE materials SET current_version_id=?,status='Pending Validation',updated_at=NOW() WHERE id=?`,[versionId,id]);
   await conn.commit();
-  res.json({success:true,data:{versionId,version,spglibAvailable:sg.available,spglibReason:sg.reason||null,totalCandidates:candidates.length,allowed:sg.available?sg.reflections.filter(r=>r.allowed).length:0,forbidden:sg.available?sg.reflections.filter(r=>!r.allowed).length:0,reflections:candidates.map(r=>({...r,status:byKey.get(`${r.h},${r.k},${r.l}`)?.allowed?'Allowed':sg.available?'Forbidden':'Requires SG verification'}))}});
+  res.json({success:true,data:{versionId,version,savedCount:input.reflections.length}});
  }catch(e){await conn.rollback();next(e);}finally{conn.release();}
 });
 router.post('/:id/validate',requireAuth,async(req,res,next)=>{
@@ -121,10 +143,10 @@ router.post('/:id/validate',requireAuth,async(req,res,next)=>{
   if(m.status!=='Pending Validation'||!m.current_version_id)throw httpError('Material must be calculated before validation.');
   const [v]=await conn.execute('SELECT * FROM material_versions WHERE id=? AND material_id=? FOR UPDATE',[m.current_version_id,id]);
   if(!v.length)throw httpError('Current material version not found',409);
-  const [unknown]=await conn.execute(`SELECT COUNT(*) AS n FROM hkl_reflections WHERE material_version_id=? AND reflection_status='Requires SG verification'`,[v[0].id]);
+  const [unresolved]=await conn.execute(`SELECT COUNT(*) AS n FROM hkl_reflections WHERE material_version_id=? AND reflection_status IN ('Requires SG verification','Centering-compatible')`,[v[0].id]);
   const [allowedCount]=await conn.execute(`SELECT COUNT(*) AS n FROM hkl_reflections WHERE material_version_id=? AND reflection_status='Allowed'`,[v[0].id]);
-  if(allowedCount[0].n===0)throw httpError('No allowed reflections were generated; adjust HKL limits or review the space group.',409);
-  if(unknown[0].n>0)throw httpError('Space-group verification unavailable. Configure and verify spglib service before validating this material.',409);
+  if(allowedCount[0].n===0)throw httpError('No allowed reflections were saved; adjust HKL limits or review the space group.',409);
+  if(unresolved[0].n>0)throw httpError('Material version contains Centering-compatible or Requires SG verification reflections that have not been conclusively classified. Configure and verify the spglib service, then recalculate before validating.',409);
   const notes=String(req.body?.validationNotes||'').slice(0,4000);
   await conn.execute(`UPDATE material_versions SET validation_status='Validated',validated_at=NOW(),validated_by=?,validation_notes=? WHERE id=?`,[req.user.sub,notes,v[0].id]);
   await conn.execute(`UPDATE materials SET status='Validated',validated_version_id=?,validated_at=NOW(),validated_by=?,updated_at=NOW() WHERE id=?`,[v[0].id,req.user.sub,id]);
@@ -140,7 +162,7 @@ router.get('/:id',async(req,res,next)=>{
    const [v]=await pool.execute('SELECT * FROM material_versions WHERE id=? AND material_id=?',[m.current_version_id,id]);
    if(v.length){version=v[0];[reflections]=await pool.execute('SELECT h,k,l,d_angstrom,d_nanometer,inverse_d2,reflection_status,calculation_method FROM hkl_reflections WHERE material_version_id=? ORDER BY d_angstrom DESC',[m.current_version_id]);}
   }
-  const summary={total:reflections.length,allowed:reflections.filter(r=>r.reflection_status==='Allowed').length,forbidden:reflections.filter(r=>r.reflection_status==='Forbidden').length,requiresVerification:reflections.filter(r=>r.reflection_status==='Requires SG verification').length};
+  const summary={total:reflections.length,allowed:reflections.filter(r=>r.reflection_status==='Allowed').length,forbidden:reflections.filter(r=>r.reflection_status==='Forbidden').length,centeringCompatible:reflections.filter(r=>r.reflection_status==='Centering-compatible').length,requiresVerification:reflections.filter(r=>r.reflection_status==='Requires SG verification').length};
   res.json({success:true,data:{...m,version,reflections,summary}});
  }catch(e){next(e);}
 });

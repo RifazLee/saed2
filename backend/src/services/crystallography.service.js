@@ -29,13 +29,24 @@ export function dSpacing(p,h,k,l){
  for(let i=0;i<3;i++)for(let j=0;j<3;j++)q+=v[i]*r[i][j]*v[j];
  if(!(q>0))throw new Error('Invalid reciprocal metric');return 1/Math.sqrt(q);
 }
+export function centeringAllowed(symbol,h,k,l){
+ const letter=(symbol.trim().replace(/^[-+]/,'')[0]||'P').toUpperCase();
+ switch(letter){
+  case 'I':return (h+k+l)%2===0;
+  case 'F':return Math.abs(h)%2===Math.abs(k)%2&&Math.abs(k)%2===Math.abs(l)%2;
+  case 'A':return (k+l)%2===0;
+  case 'B':return (h+l)%2===0;
+  case 'C':return (h+k)%2===0;
+  case 'R':return ((-h+k+l)%3===0);
+  default:return true;
+ }
+}
 export function generateCandidates(p,limits){
- const out=[],seen=new Set();
- for(let h=-limits.maxH;h<=limits.maxH;h++)for(let k=-limits.maxK;k<=limits.maxK;k++)for(let l=-limits.maxL;l<=limits.maxL;l++){
+ const out=[];
+ for(let h=0;h<=limits.maxH;h++)for(let k=0;k<=limits.maxK;k++)for(let l=0;l<=limits.maxL;l++){
   if(!h&&!k&&!l)continue;
   const d=dSpacing(p,h,k,l);if(d<limits.minD||(limits.maxD!=null&&d>limits.maxD))continue;
-  const key=[[h,k,l],[-h,-k,-l]].map(x=>x.join(',')).sort()[0];if(seen.has(key))continue;seen.add(key);
-  out.push({h,k,l,dAngstrom:d,dNanometer:d/10,inverseD2:1/(d*d)});
+  out.push({h,k,l,dAngstrom:d,dNanometer:d/10,inverseD2:1/(d*d),centeringCompatible:centeringAllowed(p.spaceGroupSymbol||'P',h,k,l)});
  }
  return out.sort((a,b)=>b.dAngstrom-a.dAngstrom);
 }

@@ -7,10 +7,14 @@ export type Lattice = {
   alpha: number; beta: number; gamma: number;
 };
 
+export type ReflectionStatus = 'Allowed' | 'Forbidden' | 'Centering-compatible' | 'Requires SG verification';
+
 export type Reflection = {
   h: number; k: number; l: number; hkl: string;
   dAngstrom: number; dNm: number; inverseD2: number;
-  status: 'Centering-forbidden' | 'Centering-compatible; SG check required';
+  status: ReflectionStatus;
+  centeringCompatible?: boolean;
+  selected?: boolean;
 };
 
 export function latticeDefaults(system: CrystalSystem): Lattice {
@@ -133,15 +137,16 @@ export function generateReflections(
 ): Reflection[] {
   const rows: Reflection[]=[];
   const seen=new Set<string>();
-  for(let h=-maxH;h<=maxH;h++) for(let k=-maxK;k<=maxK;k++) for(let l=-maxL;l<=maxL;l++) {
+  for(let h=0;h<=maxH;h++) for(let k=0;k<=maxK;k++) for(let l=0;l<=maxL;l++) {
     if(h===0&&k===0&&l===0) continue;
     const d=calculateDSpacing(p,h,k,l);
     if(d<minD || (maxD!==undefined && d>maxD)) continue;
     const canonical=includeEquivalent ? `${h},${k},${l}` : [ [h,k,l],[-h,-k,-l] ].map(v=>v.join(',')).sort()[0];
     if(seen.has(canonical)) continue;
     seen.add(canonical);
+    const compatible=centeringAllowed(symbol,h,k,l);
     rows.push({h,k,l,hkl:`(${h} ${k} ${l})`,dAngstrom:d,dNm:d/10,inverseD2:1/(d*d),
-      status:centeringAllowed(symbol,h,k,l) ? 'Centering-compatible; SG check required':'Centering-forbidden'});
+      status:compatible?'Centering-compatible':'Forbidden',centeringCompatible:compatible,selected:false});
   }
   return rows.sort((a,b)=>b.dAngstrom-a.dAngstrom);
 }
