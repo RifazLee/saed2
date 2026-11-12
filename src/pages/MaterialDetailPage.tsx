@@ -7,12 +7,13 @@ import { api, parseLatticeJson, type ApiEnvelope, type ApiMaterial, type ApiRefl
 
 type Props = { materialId: string; token: string | null; onBack: () => void };
 
-type StatusFilter = 'Allowed' | 'Forbidden' | 'Requires SG verification' | 'All';
+type StatusFilter = 'Allowed' | 'Forbidden' | 'Centering-compatible' | 'Requires SG verification' | 'All';
 const PAGE_SIZE = 25;
 
 const statusStyles: Record<string, string> = {
   'Allowed': 'bg-emerald-50 text-emerald-700 ring-emerald-200',
   'Forbidden': 'bg-red-50 text-red-700 ring-red-200',
+  'Centering-compatible': 'bg-sky-50 text-sky-700 ring-sky-200',
   'Requires SG verification': 'bg-amber-50 text-amber-700 ring-amber-200'
 };
 
@@ -52,6 +53,7 @@ export default function MaterialDetailPage({ materialId, token, onBack }: Props)
       total: refs.length,
       allowed: refs.filter(r => r.reflection_status === 'Allowed').length,
       forbidden: refs.filter(r => r.reflection_status === 'Forbidden').length,
+      centeringCompatible: refs.filter(r => r.reflection_status === 'Centering-compatible').length,
       requiresVerification: refs.filter(r => r.reflection_status === 'Requires SG verification').length
     };
   }, [material]);
@@ -132,10 +134,11 @@ export default function MaterialDetailPage({ materialId, token, onBack }: Props)
       </section>
 
       {/* Summary cards */}
-      <section className="grid gap-4 sm:grid-cols-4">
+      <section className="grid gap-4 sm:grid-cols-5">
         {([
           ['Total Allowed Reflections', summary.allowed, 'text-emerald-700'],
           ['Total Forbidden Reflections', summary.forbidden, 'text-red-700'],
+          ['Centering-compatible', summary.centeringCompatible ?? 0, 'text-sky-700'],
           ['Requires SG Verification', summary.requiresVerification, 'text-amber-700'],
           ['Total HKL Records', summary.total, 'text-slate-900']
         ] as const).map(([label, value, color]) => (
@@ -191,6 +194,7 @@ export default function MaterialDetailPage({ materialId, token, onBack }: Props)
             <select className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500" value={filter} onChange={e => setFilter(e.target.value as StatusFilter)}>
               <option value="Allowed">Allowed</option>
               <option value="Forbidden">Forbidden</option>
+              <option value="Centering-compatible">Centering-compatible</option>
               <option value="Requires SG verification">Requires SG verification</option>
               <option value="All">All reflections</option>
             </select>

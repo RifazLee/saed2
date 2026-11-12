@@ -5,9 +5,10 @@ import RingSelectPage from '@/pages/RingSelectPage';
 import ResultsPage from '@/pages/ResultsPage';
 import MaterialPage, { type MaterialRecord } from '@/pages/MaterialPage';
 import MaterialDetailPage from '@/pages/MaterialDetailPage';
+import type { Reflection } from '@/lib/crystallography';
 import LoginPage from '@/pages/LoginPage';
 import type { AnalysisParams, AnalysisResult, DetectionResult } from '@/lib/diffraction/types';
-import { api, apiMaterialToRecord, type ApiMaterial } from '@/lib/api';
+import { api, apiMaterialToRecord, type ApiMaterial, type ApiCalculationResponse, type ApiSaveReflectionsResponse } from '@/lib/api';
 
 type Stage = 'materials' | 'material-detail' | 'input' | 'processing' | 'ringselect' | 'results';
 type ApiEnvelope<T> = {success:boolean;data:T};
@@ -41,7 +42,7 @@ export default function App() {
   },[]);
   const logout=()=>{sessionStorage.removeItem('saed_token');setToken(null);setMaterials([]);setStage('materials');};
 
-  const saveMaterial = useCallback(async(material:MaterialRecord) => {
+  const saveMaterial = useCallback(async(material:MaterialRecord, selectedReflections: Reflection[]) => {
     if(!token)throw new Error('Session expired. Sign in again.');
     const payload={
       materialName:material.name,chemicalFormula:material.formula,phase:material.phase,
@@ -59,14 +60,19 @@ export default function App() {
     },token);
     id=created.data.id;
     try {
-      if(material.status==='Validated'){
-        await api<ApiEnvelope<unknown>>(`/materials/${id}/calculate`,{
-          method:'POST',body:JSON.stringify(material.calculationLimits || {maxH:8,maxK:8,maxL:8,minD:0.5})
-        },token);
-        await api<ApiEnvelope<unknown>>(`/materials/${id}/validate`,{
-          method:'POST',body:JSON.stringify({validationNotes:'Operator reviewed material metadata, lattice parameters, reference source and generated reflections.'})
-        },token);
-      }
+      const limits=material.calculationLimits || {maxH:8,maxK:8,maxL:8,minD:0.5};
+      const calc=await api<ApiEnvelope<ApiCalculationResponse>>(`/materials/${id}/calculate`,{
+        method:'POST',body:JSON.stringify(limits)
+      },token);
+      const verdictMap=new Map((calc.data.reflections||[]).map(r=>[`${r.h},${r.k},${r.l}`,r.status]));
+      const reflectionsToSave=selectedReflections.map(r=>({
+        h:r.h,k:r.k,l:r.l,
+        dAngstrom:r.dAngstrom,dNanometer:r.dNm,inverseD2:r.inverseD2,
+        status:verdictMap.get(`${r.h},${r.k},${r.l}`) || r.status
+      }));
+      await api<ApiEnvelope<ApiSaveReflectionsResponse>>(`/materials/${id}/save-reflections`,{
+        method:'POST',body:JSON.stringify({...limits,reflections:reflectionsToSave})
+      },token);
     } finally {
       await refreshMaterials();
     }
